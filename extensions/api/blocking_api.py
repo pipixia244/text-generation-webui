@@ -11,7 +11,7 @@ from modules.models import load_model, unload_model
 from modules.models_settings import get_model_metadata, update_model_parameters
 from modules.text_generation import (
     encode,
-    generate_reply,
+    generate_reply_token,
     stop_everything_event
 )
 from modules.utils import get_available_models
@@ -55,16 +55,20 @@ class Handler(BaseHTTPRequestHandler):
             stopping_strings = generate_params.pop('stopping_strings')
             generate_params['stream'] = False
 
-            generator = generate_reply(
+            generator = generate_reply_token(
                 prompt, generate_params, stopping_strings=stopping_strings, is_chat=False)
 
             answer = ''
-            for a in generator:
+            new_token_count = 0
+            
+            for a, new_token in generator:
                 answer = a
+                new_token_count = new_token
 
             response = json.dumps({
                 'results': [{
-                    'text': answer
+                    'text': answer,
+                    'new_token': new_token_count
                 }]
             })
 
