@@ -43,20 +43,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
-        body = json.loads(self.rfile.read(content_length).decode('utf-8'))
+        body: dict[str, ] = json.loads(self.rfile.read(content_length).decode('utf-8'))
 
         if self.path == '/api/v1/generate':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-
-            prompt = body['prompt']
-            generate_params = build_parameters(body)
-            stopping_strings = generate_params.pop('stopping_strings')
-            generate_params['stream'] = False
-
+            print(body)
+            prompt = body.pop('prompt')
+            body['stream'] = False
+            try:
+                stopping_strings = body.pop('stopping_strings')
+            except Exception as e:
+                stopping_strings = []
+            print(prompt)
             generator = generate_reply_token(
-                prompt, generate_params, stopping_strings=stopping_strings, is_chat=False)
+                prompt, body, stopping_strings=stopping_strings, is_chat=False)
 
             answer = ''
             new_token_count = 0
