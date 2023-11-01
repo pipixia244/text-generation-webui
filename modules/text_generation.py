@@ -33,7 +33,17 @@ def generate_reply(*args, **kwargs):
         shared.generation_lock.release()
 
 
-def _generate_reply(question, state, stopping_strings=None, is_chat=False, escape_html=False):
+def generate_reply_token(*args, **kwargs):
+    shared.generation_lock.acquire()
+    try:
+        for result, new_token in _generate_reply(is_return_token_cnt=True, *args, **kwargs):
+            yield result, new_token
+    except Exception as e:
+        print(e)
+    finally:
+        shared.generation_lock.release()
+
+def _generate_reply(question, state, stopping_strings=None, is_chat=False, escape_html=False, is_return_token_cnt=False):
 
     # Find the appropriate generation function
     generate_func = apply_extensions('custom_generate_reply')
@@ -68,42 +78,74 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
     seed = set_manual_seed(state['seed'])
     last_update = -1
     reply = ''
+    new_token = 0
     is_stream = state['stream']
     if len(all_stop_strings) > 0 and not state['stream']:
         state = copy.deepcopy(state)
         state['stream'] = True
 
     # Generate
-    for reply in generate_func(question, original_question, seed, state, stopping_strings, is_chat=is_chat):
-        if escape_html:
-            reply = html.escape(reply)
+    if is_return_token_cnt:
+        for reply, token_cnt in generate_func(question, original_question, seed, state, stopping_strings, is_chat=is_chat, is_return_token_cnt=is_return_token_cnt):
+            if escape_html:
+                reply = html.escape(reply)
 
-        reply, stop_found = apply_stopping_strings(reply, all_stop_strings)
-        if is_stream:
-            cur_time = time.time()
+            reply, stop_found = apply_stopping_strings(reply, all_stop_strings)
+            new_token = token_cnt
+            if is_stream:
+                cur_time = time.time()
 
-            # Maximum number of tokens/second
-            if state['max_tokens_second'] > 0:
-                diff = 1 / state['max_tokens_second'] - (cur_time - last_update)
-                if diff > 0:
-                    time.sleep(diff)
+                # Maximum number of tokens/second
+                if state['max_tokens_second'] > 0:
+                    diff = 1 / state['max_tokens_second'] - (cur_time - last_update)
+                    if diff > 0:
+                        time.sleep(diff)
 
-                last_update = time.time()
-                yield reply
+                    last_update = time.time()
+                    yield reply, token_cnt
 
-            # Limit updates to 24 per second to not stress low latency networks
-            else:
-                if cur_time - last_update > 0.041666666666666664:
-                    last_update = cur_time
+                # Limit updates to 24 per second to not stress low latency networks
+                else:
+                    if cur_time - last_update > 0.041666666666666664:
+                        last_update = cur_time
+                        yield reply, token_cnt
+
+            if stop_found or (state['max_tokens_second'] > 0 and shared.stop_everything):
+                break
+            
+    else:
+        for reply in generate_func(question, original_question, seed, state, stopping_strings, is_chat=is_chat, is_return_token_cnt=is_return_token_cnt):
+            if escape_html:
+                reply = html.escape(reply)
+
+            reply, stop_found = apply_stopping_strings(reply, all_stop_strings)
+            if is_stream:
+                cur_time = time.time()
+
+                # Maximum number of tokens/second
+                if state['max_tokens_second'] > 0:
+                    diff = 1 / state['max_tokens_second'] - (cur_time - last_update)
+                    if diff > 0:
+                        time.sleep(diff)
+
+                    last_update = time.time()
                     yield reply
 
-        if stop_found or (state['max_tokens_second'] > 0 and shared.stop_everything):
-            break
+                # Limit updates to 24 per second to not stress low latency networks
+                else:
+                    if cur_time - last_update > 0.041666666666666664:
+                        last_update = cur_time
+                        yield reply
+
+            if stop_found or (state['max_tokens_second'] > 0 and shared.stop_everything):
+                break
 
     if not is_chat:
         reply = apply_extensions('output', reply, state)
-
-    yield reply
+    if is_return_token_cnt:
+        yield reply, new_token
+    else:
+        yield reply
 
 
 def encode(prompt, add_special_tokens=True, add_bos_token=True, truncation_length=None):
@@ -216,8 +258,9 @@ def fix_galactica(s):
     return s
 
 
-def get_reply_from_output_ids(output_ids, input_ids, original_question, state, is_chat=False):
+def get_reply_from_output_ids(output_ids, input_ids, original_question, state, is_chat=False, is_return_token_cnt=False):
     if shared.is_seq2seq:
+        new_tokens = len(output_ids)
         reply = decode(output_ids, state['skip_special_tokens'])
     else:
         new_tokens = len(output_ids) - len(input_ids[0])
@@ -226,8 +269,10 @@ def get_reply_from_output_ids(output_ids, input_ids, original_question, state, i
         if type(shared.tokenizer) in [transformers.LlamaTokenizer, transformers.LlamaTokenizerFast] and len(output_ids) > 0:
             if shared.tokenizer.convert_ids_to_tokens(int(output_ids[-new_tokens])).startswith('▁'):
                 reply = ' ' + reply
-
-    return reply
+    if is_return_token_cnt:
+        return reply, new_tokens
+    else:
+        return reply
 
 
 def set_manual_seed(seed):
@@ -272,7 +317,7 @@ def apply_stopping_strings(reply, all_stop_strings):
     return reply, stop_found
 
 
-def generate_reply_HF(question, original_question, seed, state, stopping_strings=None, is_chat=False):
+def generate_reply_HF(question, original_question, seed, state, stopping_strings=None, is_chat=False, is_return_token_cnt=False):
     generate_params = {}
     for k in ['max_new_tokens', 'do_sample', 'temperature', 'top_p', 'typical_p', 'repetition_penalty', 'presence_penalty', 'frequency_penalty', 'repetition_penalty_range', 'encoder_repetition_penalty', 'top_k', 'min_length', 'no_repeat_ngram_size', 'num_beams', 'penalty_alpha', 'length_penalty', 'early_stopping', 'tfs', 'top_a', 'mirostat_mode', 'mirostat_tau', 'mirostat_eta', 'guidance_scale']:
         generate_params[k] = state[k]
@@ -330,7 +375,10 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
     t0 = time.time()
     try:
         if not is_chat and not shared.is_seq2seq:
-            yield ''
+            if is_return_token_cnt:
+                yield '', 0
+            else:
+                yield ''
 
         # Generate the entire reply at once.
         if not state['stream']:
@@ -339,7 +387,7 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
                 if cuda:
                     output = output.cuda()
 
-            yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
+            yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat, is_return_token_cnt=is_return_token_cnt)
 
         # Stream the reply 1 token at a time.
         # This is based on the trick of using 'stopping_criteria' to create an iterator.
@@ -359,7 +407,7 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
                     if output[-1] in eos_token_ids:
                         break
 
-                    yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
+                    yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat, is_return_token_cnt=is_return_token_cnt)
 
     except Exception:
         traceback.print_exc()
@@ -368,7 +416,6 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
         original_tokens = len(original_input_ids[0])
         new_tokens = len(output) - (original_tokens if not shared.is_seq2seq else 0)
         print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {seed})')
-        return
 
 
 def generate_reply_custom(question, original_question, seed, state, stopping_strings=None, is_chat=False):
