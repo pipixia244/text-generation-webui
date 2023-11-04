@@ -49,14 +49,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            print(body)
             prompt = body.pop('prompt')
             body['stream'] = False
             try:
                 stopping_strings = body.pop('stopping_strings')
             except Exception as e:
                 stopping_strings = []
-            print(prompt)
             generator = generate_reply_token(
                 prompt, body, stopping_strings=stopping_strings, is_chat=False)
 
@@ -67,6 +65,7 @@ class Handler(BaseHTTPRequestHandler):
                 answer = a
                 new_token_count = new_token
 
+            print(answer, new_token_count)
             response = json.dumps({
                 'results': [{
                     'text': answer,
