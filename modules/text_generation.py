@@ -417,7 +417,6 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
                 print(question_tmp)
                 print(generation_config)
                 output = shared.model.generate(**shared.tokenizer(question_tmp, return_tensors="pt").to(shared.model.device), generation_config=generation_config)[0]
-                print(output)
                 # output = shared.model.generate(**generate_params)[0]
                 if cuda:
                     output = output.cuda()
@@ -450,7 +449,7 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
         t1 = time.time()
         original_tokens = len(original_input_ids[0])
         new_tokens = len(output) - (original_tokens if not shared.is_seq2seq else 0)
-        print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {seed})')
+        print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, {(len(question_tmp) - 42)/(t1-t0)} ja charators/s, seed {seed})')
 
 
 def generate_reply_custom(question, original_question, seed, state, stopping_strings=None, is_chat=False):
